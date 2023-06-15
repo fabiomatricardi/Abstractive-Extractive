@@ -1,0 +1,856 @@
+URL: https://towardsdatascience.com/text-summarization-with-nlp-textrank-vs-seq2seq-vs-bart-474943efeb09
+Title: Text Summarization with NLP: TextRank vs Seq2Seq vs BART | by Mauro Di Pietro | Towards Data Science
+-----------------------------------------------------------------------------------------------------------
+
+Write
+8
+Image by author
+
+Member-only story
+
+Text Summarization with NLP: TextRank vs Seq2Seq vs BART
+Natural Language Processing with Python, Gensim, Tensorflow, Transformers
+
+Mauro Di Pietro
+
+·
+
+Follow
+
+Published in
+
+Towards Data Science
+
+·
+17 min read
+·
+Mar 15, 2022
+
+188
+
+2
+
+Summary
+
+In this article, using NLP and Python, I will explain 3 different strategies for text summarization: the old-fashioned TextRank (with gensim), the famous Seq2Seq (with tensorflow), and the cutting edge BART (with transformers).
+
+Image by author
+
+NLP (Natural Language Processing) is the field of artificial intelligence that studies the interactions between computers and human languages, in particular how to program computers to process and analyze large amounts of natural language data. The hardest NLP tasks are the ones where the output isn’t a single label or value (like Classification and Regression), but a full new text (like Translation, Summarization and Conversation).
+
+Text summarization is the problem of reducing the number of sentences and words of a document without changing its meaning. There are different techniques to extract information from raw text data and use it for a summarization model, overall they can be categorized as Extractive and Abstractive. Extractive methods select the most important sentences within a text (without necessarily understanding the meaning), therefore the result summary is just a subset of the full text. On the contrary, Abstractive models use advanced NLP (i.e. word embeddings) to understand the semantics of the text and generate a meaningful summary. Consequently, Abstractive techniques are much harder to train from scratch as they need a lot of parameters and data.
+
+This tutorial compares the old school approach of TextRank (Extractive), the popular encoder-decoder neural network Seq2Seq (Abstractive), and the state-of-the-art Attention-based Transformers (Abstractive) that have completely revolutionized the NLP landscape.
+
+I will present some useful Python code that can be easily applied in other similar cases (just copy, paste, run) and walk through every line of code with comments so that you can replicate this example (link to the full code below).
+
+DataScience_ArtificialIntelligence_Utils/example_text_summarization.ipynb at master ·…
+Examples of Data Science projects and Artificial Intelligence use cases …
+
+github.com
+
+I will use the “CNN DailyMail” dataset in which you are provided with thousands of news articles written in English by journalists at CNN and the Daily Mail, and a summary for each (link below).
+
+cnn_dailymail · Datasets at Hugging Face
+We're on a journey to advance and democratize artificial intelligence through open source and open science.
+
+huggingface.co
+
+In particular, I will go through:
+
+Setup: import packages, read data, preprocessing.
+Fit TextRank with gensim to build a baseline and evaluate results with ROUGE metrics and data visualization.
+Fit Seq2Seq with tensorflow/keras to train a deep learning model.
+Use pre-trained BART with transformers library by HuggingFace.
+Setup
+
+First of all, I need to import the following libraries:
+
+## for data
+import datasets #(1.13.3)
+import pandas as pd #(0.25.1)
+import numpy #(1.16.4)
+## for plotting
+import matplotlib.pyplot as plt #(3.1.2)
+import seaborn as sns #(0.9.0)
+## for preprocessing
+import re
+import nltk #(3.4.5)
+import contractions #(0.0.18)
+## for textrank
+import gensim #(3.8.1)
+## for evaluation
+import rouge #(1.0.0)
+import difflib
+## for seq2seq
+from tensorflow.keras import callbacks, models, layers, preprocessing as kprocessing #(2.6.0)
+## for bart
+import transformers #(3.0.1)
+
+Then I load the dataset using the dedicated library by HuggingFace:
+
+## load the full dataset of 300k articles
+dataset = datasets.load_dataset("cnn_dailymail", '3.0.0')
+lst_dics = [dic for dic in dataset["train"]]
+## keep the first N articles if you want to keep it lite
+dtf = pd.DataFrame(lst_dics).rename(columns={"article":"text",
+"highlights":"y"})[["text","y"]].head(20000)
+dtf.head()
+Image by author
+
+Let’s check out a random example:
+
+i = 1
+print("--- Full text ---")
+print(dtf["text"][i])
+print("--- Summary ---")
+print(dtf["y"][i])
+Text from CNN DailyMail dataset
+
+Here I manually marked in red the pieces of information mentioned in the summary. Sports articles are tough for machines as there isn’t much space for interpretation of what’s important and what’s not… the headline must report the main results. I’ll keep this example in the test set to compare the models.
+
+dtf_train = dtf.iloc[i+1:]
+dtf_test = dtf.iloc[:i+1]
+TextRank
+
+TextRank (2004) is a graph-based ranking model for text processing, based on Google’s PageRank algorithm, that finds the most relevant sentences in a text. PageRank was the first algorithm used by Google search engine to sort web pages in 1998. In a nutshell, if page A links to page B and page C, page B links to page C, the sorting would be page C, page B, page A.
+
+Image by author
+
+TextRank is very easy to use because it’s unsupervised. First, the whole text is split into sentences, then the algorithm builds a graph where sentences are the nodes and overlapped words are the links. Finally, PageRank identifies the most important nodes of this network of sentences.
+
+You can easily apply TextRank algorithm to your data with the gensim library:
+
+'''
+Summarizes corpus with TextRank.
+:parameter
+:param corpus: str or list - dtf["text"]
+:param ratio: length of the summary (ex. 20% of the text)
+:return
+list of summaries
+'''
+def textrank(corpus, ratio=0.2):
+if type(corpus) is str:
+corpus = [corpus]
+lst_summaries = [gensim.summarization.summarize(txt,
+ratio=ratio) for txt in corpus]
+return lst_summaries
+
+## Apply the function to corpus
+predicted = textrank(corpus=dtf_test["text"], ratio=0.2)
+predicted[i]
+Image by author
+
+How can we evaluate this result? Usually, I do it in 2 ways:
+
+ROUGE metrics (Recall-Oriented Understudy for Gisting Evaluation):
+a set of metrics that compare an automatically produced summary against the reference summaries by overlapping n-grams.
+'''
+Calculate ROUGE score.
+:parameter
+:param y_test: string or list
+:param predicted: string or list
+'''
+def evaluate_summary(y_test, predicted):
+rouge_score = rouge.Rouge()
+scores = rouge_score.get_scores(y_test, predicted, avg=True)
+score_1 = round(scores['rouge-1']['f'], 2)
+score_2 = round(scores['rouge-2']['f'], 2)
+score_L = round(scores['rouge-l']['f'], 2)
+print("rouge1:", score_1, "| rouge2:", score_2, "| rougeL:",
+score_2, "--> avg rouge:", round(np.mean(
+[score_1,score_2,score_L]), 2))
+## Apply the function to predicted
+i = 5
+evaluate_summary(dtf_test["y"][i], predicted[i])
+Image by author
+
+The results show that 31% of unigrams (ROUGE-1) and 7% of bigrams (ROUGE-2) are present in both summaries, while the longest common subsequences (ROUGE-L) match by 7%. Overall, the average score is 20%. Please note that ROUGE scores don’t measure how fluent the summary is, for that I usually use the good old human eye.
+
+2. Visualization: display 2 texts, i.e. the summary and the original text, or the predicted summary and the real summary, and highlight the matching parts.
+
+I think you’ll find this function very useful as it highlights on a notebook the matching substrings of two texts. It can be used on word-level:
+
+match = display_string_matching(dtf_test["y"][i], predicted[i], both=True, sentences=False, titles=["Real Summary", "Predicted Summary"])
+from IPython.core.display import display, HTML
+display(HTML(match))
+Image by author
+
+Or you can set sentences=True and it will match the text on sentence-level instead of word-level:
+
+match = display_string_matching(dtf_test["text"][i], predicted[i], both=True, sentences=True, titles=["Full Text", "Predicted Summary"])
+
+from IPython.core.display import display, HTML
+display(HTML(match))
+Image by author
+
+The prediction has most of the information mentioned in the original summary. As expected from an Extractive algorithm, the predicted summary is fully contained in the text: the model considers those 3 sentences the most important. We can keep this as the baseline for the following Abstractive methods.
+
+Seq2Seq
+
+Sequence-to-Sequence models (2014) are neural networks that take a sequence from a specific domain (i.e. text vocabulary) as the input and output a new sequence in another domain (i.e. summary vocabulary). Seq2Seq models usually have the following key characteristics:
+
+Sequences as the corpus: the texts are padded into sequences with the same length to get a feature matrix.
+Word Embedding mechanism: feature learning techniques where words from the vocabulary are mapped to vectors of real numbers which are calculated from the probability distribution for each word appearing before or after another.
+Encoder-Decoder structure: the encoder processes the input sequence and returns its own internal states that serve as the context for the decoder, which predicts the next word of the target sequence, given the previous ones.
+Model for training and Model for predictions: the model used in training isn’t directly used to predict. In fact, we shall code 2 neural networks (both with an Encoder-Decoder structure), one used for training and the other (called “Inference Model”) to generate predictions by leveraging some of the layers from the trained model.
+
+Let’s do all of that starting with some Data Analysis which is needed for the next Feature Engineering. Since we are going to transform the text into sequences of words, we have to make 2 decisions here:
+
+the right sequence size, as our corpus has different lengths
+how many words our model must remember, as rare ones should be excluded
+
+I will clean and analyze the data to address those 2 points.
+
+## create stopwords
+lst_stopwords = nltk.corpus.stopwords.words("english")
+## add words that are too frequent
+lst_stopwords = lst_stopwords + ["cnn","say","said","new"]
+
+## cleaning function
+def utils_preprocess_text(txt, punkt=True, lower=True, slang=True, lst_stopwords=None, stemm=False, lemm=True):
+### separate sentences with '. '
+txt = re.sub(r'\.(?=[^ \W\d])', '. ', str(txt))
+### remove punctuations and characters
+txt = re.sub(r'[^\w\s]', '', txt) if punkt is True else txt
+### strip
+txt = " ".join([word.strip() for word in txt.split()])
+### lowercase
+txt = txt.lower() if lower is True else txt
+### slang
+txt = contractions.fix(txt) if slang is True else txt
+### tokenize (convert from string to list)
+lst_txt = txt.split()
+### stemming (remove -ing, -ly, ...)
+if stemm is True:
+ps = nltk.stem.porter.PorterStemmer()
+lst_txt = [ps.stem(word) for word in lst_txt]
+### lemmatization (convert the word into root word)
+if lemm is True:
+lem = nltk.stem.wordnet.WordNetLemmatizer()
+lst_txt = [lem.lemmatize(word) for word in lst_txt]
+### remove Stopwords
+if lst_stopwords is not None:
+lst_txt = [word for word in lst_txt if word not in
+lst_stopwords]
+### back to string
+txt = " ".join(lst_txt)
+return txt
+
+## apply function to both text and summaries
+dtf_train["text_clean"] = dtf_train["text"].apply(lambda x: utils_preprocess_text(x, punkt=True, lower=True, slang=True, lst_stopwords=lst_stopwords, stemm=False, lemm=True))
+dtf_train["y_clean"] = dtf_train["y"].apply(lambda x: utils_preprocess_text(x, punkt=True, lower=True, slang=True, lst_stopwords=lst_stopwords, stemm=False, lemm=True))
+
+Now we can have a look at the length distribution by counting the words:
+
+## count
+dtf_train['word_count'] = dtf_train[column].apply(lambda x: len(nltk.word_tokenize(str(x))) )
+## plot
+sns.distplot(dtf_train["word_count"], hist=True, kde=True, kde_kws={"shade":True})
+Image by author (run the same code for both X and y)
+X_len = 400
+y_len = 40
+
+Let’s analyze word frequency:
+
+lst_tokens = nltk.tokenize.word_tokenize(dtf_train["text_clean"].str.cat(sep=" "))
+ngrams = [1]
+
+## calculate
+dtf_freq = pd.DataFrame()
+for n in ngrams:
+dic_words_freq = nltk.FreqDist(nltk.ngrams(lst_tokens, n))
+dtf_n = pd.DataFrame(dic_words_freq.most_common(), columns=
+["word","freq"])
+dtf_n["ngrams"] = n
+dtf_freq = dtf_freq.append(dtf_n)
+dtf_freq["word"] = dtf_freq["word"].apply(lambda x: "
+".join(string for string in x) )
+dtf_freq_X= dtf_freq.sort_values(["ngrams","freq"], ascending=
+[True,False])
+
+## plot
+sns.barplot(x="freq", y="word", hue="ngrams", dodge=False,
+data=dtf_freq.groupby('ngrams')["ngrams","freq","word"].head(30))
+plt.show()
+Image by author (run the same code for both X and y)
+thres = 5 #<-- min frequency
+X_top_words = len(dtf_freq_X[dtf_freq_X["freq"]>thres])
+y_top_words = len(dtf_freq_y[dtf_freq_y["freq"]>thres])
+
+After that, we have all we need to proceed with Feature Engineering. The feature matrix is created by transforming the preprocessed corpus into a list of sequences using tensorflow/keras:
+
+lst_corpus = dtf_train["text_clean"]
+## tokenize text
+tokenizer = kprocessing.text.Tokenizer(num_words=X_top_words, lower=False, split=' ', oov_token=None,
+filters='!"#$%&()*+,-./:;<=>?@[\\]^_`{|}~\t\n')
+tokenizer.fit_on_texts(lst_corpus)
+dic_vocabulary = {"<PAD>":0}
+dic_vocabulary.update(tokenizer.word_index)
+## create sequence
+lst_text2seq= tokenizer.texts_to_sequences(lst_corpus)
+## padding sequence
+X_train = kprocessing.sequence.pad_sequences(lst_text2seq,
+maxlen=15, padding="post", truncating="post")
+
+The feature matrix X_train has a shape of N documents x Sequences max length. Let’s visualize it:
+
+sns.heatmap(X_train==0, vmin=0, vmax=1, cbar=False)
+plt.show()
+Image by author (N documents x Sequences max length)
+
+Before moving on, don’t forget to do the same feature engineering on the test set as well using the fitted tokenizer:
+
+## text to sequence with the fitted tokenizer
+lst_text2seq = tokenizer.texts_to_sequences(dtf_test["text_clean"])
+## padding sequence
+X_test = kprocessing.sequence.pad_sequences(lst_text2seq, maxlen=15,
+padding="post", truncating="post")
+
+Now let’s take care of the summaries. Before applying the same feature engineering strategy we need to add two special tokens inside each summary that determine the beginning and end of the text.
+
+# Add START and END tokens to the summaries (y)
+special_tokens = ("<START>", "<END>")
+dtf_train["y_clean"] = dtf_train['y_clean'].apply(lambda x:
+special_tokens[0]+' '+x+' '+special_tokens[1])
+dtf_test["y_clean"] = dtf_test['y_clean'].apply(lambda x:
+special_tokens[0]+' '+x+' '+special_tokens[1])
+# check example
+dtf_test["y_clean"][i]
+Image by author
+
+Now we can create the feature matrix with the summaries by leveraging the same code as before (so create a new tokenizer, padding, and transform the test set with the fitted tokenizer). If you print the y vocabulary, you should see the special tokens on top. Later on, we are going to use the start token to begin a prediction and the predicted text is going to stop when the end token appears.
+
+image by author
+
+We can move on with the Word Embeddings. There are 2 options here: train our word embedding model from scratch or use a pre-trained one. If you are going with the latter, you should follow this part, otherwise you can skip it and jump directly to the model design. In Python, you can load a pre-trained Word Embedding model from genism-data like this:
+
+import gensim_api
+nlp = gensim_api.load("glove-wiki-gigaword-300")
+
+I’d recommend Stanford’s GloVe, an unsupervised learning algorithm trained on Wikipedia, Gigaword, and Twitter corpus. You can test it by transforming any word into a vector:
+
+word = "home"
+nlp[word].shape
+>>> (300,)
+
+Those word vectors can be used in a neural network as weights. In order to do that, we need to create an embedding matrix so that the vector of the word with id N is located at the Nth row.
+
+## start the matrix (length of vocabulary x vector size) with all 0s
+X_embeddings = np.zeros((len(X_dic_vocabulary)+1, 300))for word,idx in X_dic_vocabulary.items():
+## update the row with vector
+try:
+X_embeddings[idx] = nlp[word]
+## if word not in model then skip and the row stays all 0s
+except:
+pass
+
+That code generates a matrix of shape length of vocabulary extracted from the corpus x vector size (300). The corpus matrix shall be used in the Encoder Embedding layer and the summary matrix in the Decoder one. Each id in the input sequence will be used as the index to access the embedding matrix. The output of this Embedding layer will be a 2D matrix with a word vector for each word id in the input sequence (sequence length x vector size). Let’s use the sentence “I like this article” as an example:
+
+Image by author
+
+It’s finally time to build the Encoder-Decoder model. First of all, we need to have clear in mind what are the correct inputs and outputs:
+
+the input is the X (the text sequences) plus the y (summary sequences), we are just gonna hide the last word of the summaries
+the target shall be the y (summary sequences) without the start token.
+
+Basically, you give the input text to the Encoder to understand the context, then you show the Decoder how the summary starts, and the model learns to predict how it ends. It’s a training strategy called “teacher forcing” which uses the targets rather than the output generated by the network so that it can learn to predict the word after the start token, then the next word and so on (for this you must use a Time Distributed Dense layer).
+
+Image by author
+
+I’m gonna propose two different versions of Seq2Seq. The following is the simplest algorithm you can get:
+
+An Embedding layer, which will create a word embedding from scratch, just as described before.
+One unidirectional LSTM layer, that returns a sequence as well as the cell state and hidden state.
+The final Time Distributed Dense layer, which applies the same Dense layer (same weights) to the LSTM outputs for one time step at a time so that the output layer only needs one connection to each LSTM unit.
+lstm_units = 250
+embeddings_size = 300
+
+##------------ ENCODER (embedding + lstm) ------------------------##
+x_in = layers.Input(name="x_in", shape=(X_train.shape[1],))
+### embedding
+layer_x_emb = layers.Embedding(name="x_emb",
+input_dim=len(X_dic_vocabulary),
+output_dim=embeddings_size,
+trainable=True)
+x_emb = layer_x_emb(x_in)
+### lstm
+layer_x_lstm = layers.LSTM(name="x_lstm", units=lstm_units,
+dropout=0.4, return_sequences=True,
+return_state=True)
+x_out, state_h, state_c = layer_x_lstm(x_emb)
+
+##------------ DECODER (embedding + lstm + dense) ----------------##
+y_in = layers.Input(name="y_in", shape=(None,))
+### embedding
+layer_y_emb = layers.Embedding(name="y_emb",
+input_dim=len(y_dic_vocabulary),
+output_dim=embeddings_size,
+trainable=True)
+y_emb = layer_y_emb(y_in)
+### lstm
+layer_y_lstm = layers.LSTM(name="y_lstm", units=lstm_units,
+dropout=0.4, return_sequences=True,
+return_state=True)
+y_out, _, _ = layer_y_lstm(y_emb, initial_state=[state_h, state_c])
+### final dense layers
+layer_dense = layers.TimeDistributed(name="dense", layer=layers.Dense(units=len(y_dic_vocabulary), activation='softmax'))
+y_out = layer_dense(y_out)
+
+##---------------------------- COMPILE ---------------------------##
+model = models.Model(inputs=[x_in, y_in], outputs=y_out,
+name="Seq2Seq")
+model.compile(optimizer='rmsprop',
+loss='sparse_categorical_crossentropy',
+metrics=['accuracy'])
+model.summary()
+Image by author
+
+If that ain’t hardcore enough for you, the following is an advanced (and very heavy) version of the previous Seq2Seq algorithm:
+
+An Embedding layer, that leverages pre-trained weights from GloVe.
+3 Bidirectional LSTM layers, that process sequences in both directions.
+The final Time Distributed Dense layer (same as before).
+lstm_units = 250
+
+##-------- ENCODER (pre-trained embeddings + 3 bi-lstm) ----------##
+x_in = layers.Input(name="x_in", shape=(X_train.shape[1],))
+### embedding
+layer_x_emb = layers.Embedding(name="x_emb",
+input_dim=X_embeddings.shape[0],
+output_dim=X_embeddings.shape[1],
+weights=[X_embeddings], trainable=False)
+x_emb = layer_x_emb(x_in)
+### bi-lstm 1
+layer_x_bilstm = layers.Bidirectional(layers.LSTM(units=lstm_units,
+dropout=0.2, return_sequences=True,
+return_state=True), name="x_lstm_1")
+x_out, _, _, _, _ = layer_x_bilstm(x_emb)
+### bi-lstm 2
+layer_x_bilstm = layers.Bidirectional(layers.LSTM(units=lstm_units,
+dropout=0.2, return_sequences=True,
+return_state=True), name="x_lstm_2")
+x_out, _, _, _, _ = layer_x_bilstm(x_out)
+### bi-lstm 3 (here final states are collected)
+layer_x_bilstm = layers.Bidirectional(layers.LSTM(units=lstm_units,
+dropout=0.2, return_sequences=True,
+return_state=True), name="x_lstm_3")
+x_out, forward_h, forward_c, backward_h, backward_c = layer_x_bilstm(x_out)
+state_h = layers.Concatenate()([forward_h, backward_h])
+state_c = layers.Concatenate()([forward_c, backward_c])
+
+##------ DECODER (pre-trained embeddings + lstm + dense) ---------##
+y_in = layers.Input(name="y_in", shape=(None,))
+### embedding
+layer_y_emb = layers.Embedding(name="y_emb",
+input_dim=y_embeddings.shape[0],
+output_dim=y_embeddings.shape[1],
+weights=[y_embeddings], trainable=False)
+y_emb = layer_y_emb(y_in)
+### lstm
+layer_y_lstm = layers.LSTM(name="y_lstm", units=lstm_units*2, dropout=0.2, return_sequences=True, return_state=True)
+y_out, _, _ = layer_y_lstm(y_emb, initial_state=[state_h, state_c])
+### final dense layers
+layer_dense = layers.TimeDistributed(name="dense",
+layer=layers.Dense(units=len(y_dic_vocabulary),
+activation='softmax'))
+y_out = layer_dense(y_out)
+
+##---------------------- COMPILE ---------------------------------##
+model = models.Model(inputs=[x_in, y_in], outputs=y_out,
+name="Seq2Seq")
+model.compile(optimizer='rmsprop',
+loss='sparse_categorical_crossentropy',
+metrics=['accuracy'])
+model.summary()
+Image by author
+
+I’ll keep a small subset of the training set for validation before testing it on the actual test set.
+
+## train
+training = model.fit(x=[X_train, y_train[:,:-1]],
+y=y_train.reshape(y_train.shape[0],
+y_train.shape[1],
+1)[:,1:],
+batch_size=128,
+epochs=100,
+shuffle=True,
+verbose=1,
+validation_split=0.3,
+callbacks=[callbacks.EarlyStopping(
+monitor='val_loss',
+mode='min', verbose=1, patience=2)]
+)
+## plot loss and accuracy
+metrics = [k for k in training.history.keys() if ("loss" not in k) and ("val" not in k)]
+fig, ax = plt.subplots(nrows=1, ncols=2, sharey=True)
+ax[0].set(title="Training")
+ax11 = ax[0].twinx()
+ax[0].plot(training.history['loss'], color='black')
+ax[0].set_xlabel('Epochs')
+ax[0].set_ylabel('Loss', color='black')
+for metric in metrics:
+ax11.plot(training.history[metric], label=metric)
+ax11.set_ylabel("Score", color='steelblue')
+ax11.legend()
+ax[1].set(title="Validation")
+ax22 = ax[1].twinx()
+ax[1].plot(training.history['val_loss'], color='black')
+ax[1].set_xlabel('Epochs')
+ax[1].set_ylabel('Loss', color='black')
+for metric in metrics:
+ax22.plot(training.history['val_'+metric], label=metric)
+ax22.set_ylabel("Score", color="steelblue")
+plt.show()
+Image by author
+
+Please note that I used the EarlyStopping tool in the callbacks that should stop training when a monitored metric (i.e. the validation loss) has stopped improving. This is particularly useful to save yourself some hours, especially for long and painful training like this one. I’d like to add that running Seq2Seq algorithms without leveraging GPUs is very hard because you are training 2 models at the same time (Encoder-Decoder). It would be better to use a computer with NVIDIA GPUs or Google Colab.
+
+Even if the training is done, it’s not over yet! In order to test the Seq2Seq model, as the last step, we need to build the Inference Model to generate predictions. The prediction Encoder takes a new sequence (X_test) as an input and returns the output of the last LSTM layer and its states.
+
+# Prediction Encoder
+encoder_model = models.Model(inputs=x_in, outputs=[x_out, state_h, state_c], name="Prediction_Encoder")
+encoder_model.summary()
+Image by author
+
+On the other hand, the prediction Decoder takes the start token, the output of the Encoder and its states as inputs, and returns the new states as well as the probability distribution over the vocabulary (the word with the highest probability will be the prediction).
+
+# Prediction Decoder
+## double the lstm units if you used bidirectional lstm
+lstm_units = lstm_units*2 if any("Bidirectional" in str(layer) for layer in model.layers) else lstm_units
+## states of the previous time step
+encoder_out = layers.Input(shape=(X_train.shape[1], lstm_units))
+state_h, state_c = layers.Input(shape=(lstm_units,)), layers.Input(shape=(lstm_units,))
+## decoder embeddings
+y_emb2 = layer_y_emb(y_in)
+## lstm to predict the next word
+y_out2, state_h2, state_c2 = layer_y_lstm(y_emb2, initial_state=[state_h, state_c])
+## softmax to generate probability distribution over the vocabulary
+probs = layer_dense(y_out2)
+## compile
+decoder_model = models.Model(inputs=[y_in, encoder_out, state_h, state_c], outputs=[probs, state_h2, state_c2], name="Prediction_Decoder")
+decoder_model.summary()
+Image by author
+
+After the first prediction is made with the start token and the Encoder states, the Decoder uses the generated word and the new states to predict the new word and new states. This iteration shall go on until the model finally predicts the end token or the predicted summary reaches its maximum length.
+
+Image by author
+
+Let’s code the loop described above to generate predictions and test the Seq2Seq model:
+
+# Predict
+max_seq_lenght = X_test.shape[1]
+predicted = []
+for x in X_test:
+x = x.reshape(1,-1)
+## encode X
+encoder_out, state_h, state_c = encoder_model.predict(x)
+## prepare loop
+y_in = np.array([fitted_tokenizer.word_index[special_tokens[0]]])
+predicted_text = ""
+stop = False
+while not stop:
+## predict dictionary probability distribution
+probs, new_state_h, new_state_c = decoder_model.predict(
+[y_in, encoder_out, state_h, state_c])
+
+## get predicted word
+voc_idx = np.argmax(probs[0,-1,:])
+pred_word = fitted_tokenizer.index_word[voc_idx]
+
+## check stop
+if (pred_word != special_tokens[1]) and
+(len(predicted_text.split()) < max_seq_lenght):
+predicted_text = predicted_text +" "+ pred_word
+else:
+stop = True
+
+## next
+y_in = np.array([voc_idx])
+state_h, state_c = new_state_h, new_state_c
+predicted_text = predicted_text.replace(
+special_tokens[0],"").strip()
+predicted.append(predicted_text)
+Image by author
+Image by author
+
+The model understood the context and the key information, but it poorly predicted the vocabulary. That happened because I run the Seq2Seq “lite” on a small subset of the full dataset for this experiment. If you have a powerful machine, you can add more data and increase performance.
+
+Transformers
+
+Transformers are a new modeling technique presented by Google’s paper Attention is All You Need (2017) in which it was demonstrated that sequence models (like LSTM) can be totally replaced by Attention mechanisms, even obtaining better performances. These language models can perform any NLP task by processing sequences all at once and mapping dependencies between words regardless of how far apart they are in the text. Therefore, in their word embedding the same word can have different vectors based on the context. The most famous language models are Google’s BERT and OpenAI’s GPT, with billions of parameters to train.
+
+Facebook’s BART (Bidirectional Auto-Regressive Transformer) uses a standard Seq2Seq bidirectional encoder (like BERT) and a left-to-right autoregressive decoder (like GPT). Basically, BART = BERT + GPT.
+
+The main library for Transformers models is transformers by HuggingFace:
+
+'''
+Summarizes corpus with Bart.
+:parameter
+:param corpus: list - dtf["text"]
+:param max_len: length of the summary
+:return
+list of summaries
+'''
+def bart(corpus, max_len):
+nlp = transformers.pipeline("summarization")
+lst_summaries = [nlp(txt,
+max_length=max_len
+)[0]["summary_text"].replace(" .", ".")
+for txt in corpus]
+return lst_summaries
+
+## Apply the function to corpus
+predicted = bart(corpus=dtf_test["text"], max_len=y_len)
+Image by author
+Image by author
+
+The prediction is short but effective. The Transformer model, as for most NLP tasks, seems to be the best performer.
+
+Conclusion
+
+This article has been a tutorial to demonstrate how to apply different NLP models to a text summarization use case. I compared 3 popular approaches: unsupervised TextRank, two different versions of supervised Seq2Seq based on word embeddings, and pre-trained BART. I went through feature engineering, model design, evaluation and visualization.
+
+I hope you enjoyed it! Feel free to contact me for questions and feedback or just to share your interesting projects.
+
+👉 Let’s Connect 👈
+
+This article is part of the series NLP with Python, see also:
+
+Text Classification with NLP: Tf-Idf vs Word2Vec vs BERT
+Preprocessing, Model Design, Evaluation, Explainability for Bag-of-Words, Word Embedding, Language models
+
+towardsdatascience.com
+
+Text Analysis & Feature Engineering with NLP
+Language Detection, Text Cleaning, Length, Sentiment, Named-Entity Recognition, N-grams Frequency, Word Vectors, Topic…
+
+towardsdatascience.com
+
+BERT for Text Classification with NO model training
+Use BERT, Word Embedding, and Vector Similarity when you don’t have a labeled training set
+
+towardsdatascience.com
+
+AI Chatbot with NLP: Speech Recognition + Transformers
+Build a talking ChatBot with Python and have a conversation with your AI
+
+towardsdatascience.com
+
+NLP with Python: Knowledge Graph
+SpaCy, Sentence segmentation, Part-Of-Speech tagging, Dependency parsing, Named Entity Recognition, and more…
+
+towardsdatascience.com
+
+NLP
+Python
+Data Science
+Neural Networks
+Hands On Tutorials
+
+188
+
+2
+
+Written by Mauro Di Pietro
+3.2K Followers
+·
+Writer for
+
+Towards Data Science
+
+Italian, Data Scientist, Financial Analyst, Good Reader, Bad Writer
+
+Follow
+More from Mauro Di Pietro and Towards Data Science
+
+Mauro Di Pietro
+
+in
+
+Towards Data Science
+
+Modern Route Optimization with Python
+Shortest Path, Traveling Salesman Problem, Vehicle Routing Problem, Plotting Maps and Animations
+·
+13 min read
+·
+Jun 7
+
+306
+
+4
+
+Khuyen Tran
+
+in
+
+Towards Data Science
+
+Stop Hard Coding in a Data Science Project — Use Config Files Instead
+And How to Efficiently Interact with Config Files in Python
+·
+6 min read
+·
+May 26
+
+1.3K
+
+18
+
+Miriam Santos
+
+in
+
+Towards Data Science
+
+A Data Scientist’s Essential Guide to Exploratory Data Analysis
+Best Practices, Techniques, and Tools to Fully Understand Your Data
+11 min read
+·
+May 30
+
+621
+
+5
+
+Mauro Di Pietro
+
+in
+
+Towards Data Science
+
+Deep Learning with Python: Neural Networks (complete tutorial)
+Build, Plot & Explain Artificial Neural Networks with TensorFlow
+·
+14 min read
+·
+Dec 17, 2021
+
+663
+
+9
+
+See all from Mauro Di Pietro
+See all from Towards Data Science
+Recommended from Medium
+
+Arun Jagota
+
+in
+
+Towards Data Science
+
+Thread Summarization Using NLP
+Extractive summarization using POS tagging, NER, and sentiment analysis
+·
+13 min read
+·
+Jan 8
+
+44
+
+1
+
+Josiah
+
+How to Create a Text Summarizer with the Hugging Face Library: A Beginner’s Guide
+Text summarization is a non-negligible part of writing, So, how can you create a program to summarize a body of text quickly?
+4 min read
+·
+Feb 25
+
+46
+
+2
+
+Lists
+What is ChatGPT?
+9 stories
+·
+104 saves
+Stories to Help You Grow as a Software Developer
+19 stories
+·
+125 saves
+Stories to Help You Level-Up at Work
+19 stories
+·
+99 saves
+Staff Picks
+348 stories
+·
+111 saves
+
+Ganesh Lokare
+
+Named Entity Recognition with Hugging Face Transformers: A Beginner’s Guide
+What We Will Cover in This Blog
+7 min read
+·
+Feb 7
+
+81
+
+1
+
+Kanawut Kaewnoparat
+
+Text Summarization and Keyword Extraction from customer reviews in French (Part 3/ 3)
+From the previous two blogs, we now have models and pipelines for Text Summarization and Keyword Extractions. It is time to develop a quick…
+7 min read
+·
+Mar 2
+
+6
+
+Ravi Kumar
+
+in
+
+Dev Genius
+
+NLP📜Topic Modeling📳- LDA (Latent Dirichlet Allocation) 💬💻🧠[with codes]
+In this post, we are going to discuss what is NLP, what is Topic Modeling in NLP, and how to use one of the techniques named “LDA”…
+9 min read
+·
+Jan 4
+
+84
+
+2
+
+Amber Teng
+
+Topic Modeling with BERT
+An Analysis of Senate Tweets
+·
+12 min read
+·
+Feb 14
+
+117
+
+2
+
+See more recommendations
+
+Help
+
+Status
+
+Writers
+
+Blog
+
+Careers
+
+Privacy
+
+Terms
+
+About
+
+Text to speech
+
+Teams
